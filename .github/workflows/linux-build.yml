@@ -26,7 +26,6 @@ jobs:
           git config --global url."https://github.com/".insteadOf ssh://git@github.com/
           git config --global url."https://".insteadOf git://
 
-      # Keep npm pointed at public registry and make it a bit more resilient
       - name: npm config (registry & retries)
         run: |
           npm config set registry https://registry.npmjs.org/
@@ -34,6 +33,25 @@ jobs:
           npm config set fetch-retry-maxtimeout 600000
           npm config set audit false
           npm config set fund false
+
+      # Ensure we have a 512x512 PNG for Linux icons
+      - name: Ensure 512x512 PNG app icon
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick file
+          if [ -f assets/icon.png ]; then
+            # If icon.png exists but is too small, upscale to 512x512
+            WIDTH=$(identify -format "%w" assets/icon.png || echo 0)
+            if [ "$WIDTH" -lt 256 ]; then
+              convert assets/icon.png -resize 512x512 assets/icon.png
+            fi
+          elif [ -f assets/icon.ico ]; then
+            # Make a 512x512 PNG from the first frame of the ICO
+            convert assets/icon.ico[0] -resize 512x512 assets/icon.png
+          else
+            echo "::error ::No icon found at assets/icon.png or assets/icon.ico"
+            exit 1
+          fi
 
       - name: Install deps (use lockfile if present; otherwise fallback)
         run: |
