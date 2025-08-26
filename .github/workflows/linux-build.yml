@@ -18,32 +18,29 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          # Force the public npm registry (avoids private-registry 403s)
           registry-url: https://registry.npmjs.org/
 
-      # If any dependency references GitHub via SSH, rewrite to HTTPS so no SSH keys are needed
+      # Rewrite any git+ssh deps to HTTPS so no SSH keys are needed on CI
       - name: Rewrite git+ssh deps to HTTPS
         run: |
           git config --global url."https://github.com/".insteadOf ssh://git@github.com/
           git config --global url."https://".insteadOf git://
 
-      # Make npm robust + point at npmjs explicitly
+      # Keep npm pointed at public registry and make it a bit more resilient
       - name: npm config (registry & retries)
         run: |
           npm config set registry https://registry.npmjs.org/
           npm config set fetch-retries 5
           npm config set fetch-retry-maxtimeout 600000
-          npm config set prefer-online true
-          npm config set always-auth false
-          npm config set fund false
           npm config set audit false
+          npm config set fund false
 
       - name: Install deps (use lockfile if present; otherwise fallback)
         run: |
           if [ -f package-lock.json ]; then
-            npm ci || npm i --no-audit --no-fund
+            npm ci --no-audit --no-fund --registry=https://registry.npmjs.org/ || npm i --no-audit --no-fund --registry=https://registry.npmjs.org/
           else
-            npm i --no-audit --no-fund
+            npm i --no-audit --no-fund --registry=https://registry.npmjs.org/
           fi
 
       - name: Build Linux (AppImage + deb)
