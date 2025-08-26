@@ -24,9 +24,6 @@
   "build": {
     "appId": "com.yourname.randomsimulation",
     "asar": true,
-    "publish": [
-      "never"
-    ],
     "directories": {
       "buildResources": "assets",
       "output": "dist"
@@ -38,15 +35,6 @@
       "models/**/*",
       "vendor/**/*",
       "assets/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "models/",
-        "to": "models",
-        "filter": [
-          "**/*"
-        ]
-      }
     ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "win": {
