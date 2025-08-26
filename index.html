@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Random Simulation</title>
+
+  <!-- Apply saved theme before styles to avoid flash/mismatch -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('les.theme') || 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    })();
+  </script>
+
+  <style>
+    /* ───────────────────────────────────────────────────────────────
+       THEME TOKENS
+       - Define CSS variables for light / dark / pastel themes
+       ─────────────────────────────────────────────────────────────── */
+    html {
+      /* Core surfaces */
+      --bg: #ffffff;
+      --text: #222;
+
+      /* Common tokens */
+      --border: #ddd;
+      --line: #e5e5e5;
+      --muted-text: #666;
+      --shadow: rgba(0,0,0,.12);
+      --focus-glow: rgba(0,0,0,.08);
+
+      /* Swapped UI element backgrounds */
+      --prompt-bg: #ffffff;
+      --prompt-textarea-bg: #f0f0f0;
+      --button-bg: #f0f0f0;
+      --llm-output-bg: #f0f0f0;
+
+      /* Code text */
+      --code-fg: #222;
+
+      /* Icons (and scrollbars) */
+      --icon-strong: #9E9E9E;
+
+      /* Slider colors (light: lighter greys both sides) */
+      --slider-left: #e5e5e5;  /* active (left of thumb) */
+      --slider-right: #cfcfcf; /* rest (right of thumb) */
+
+      /* Range track mapping */
+      --range-active: var(--slider-left);
+      --range-rest: var(--slider-right);
+
+      /* Scrollbar hover (fallback; overridden per-theme) */
+      --scrollbar-hover: color-mix(in srgb, var(--icon-strong) 70%, #000);
+
+      /* Popover vertical offset so bottoms align with top of prompt frame */
+      --dropup-offset: 22px;
+    }
+
+    html[data-theme="dark"] {
+      --bg: #0f1115;
+      --text: #e6e6e6;
+
+      --prompt-bg: #1b1e24;
+      --prompt-textarea-bg: #000000;
+      --button-bg: #000000;
+      --llm-output-bg: #000000;
+
+      --code-fg: #e6e6e6;
+      --icon-strong: #d0d4dc;
+
+      --border: #2a2f3a;
+      --line: #222732;
+      --muted-text: #aab2c0;
+      --shadow: rgba(0,0,0,.35);
+      --focus-glow: rgba(255,255,255,.12);
+
+      --scrollbar-hover: color-mix(in srgb, var(--icon-strong) 80%, #fff);
+
+      /* Dark: left segment bright for contrast, right muted */
+      --slider-left: #FFFFFF;
+      --slider-right: #2f3541;
+
+      --range-active: var(--slider-left);
+      --range-rest: var(--slider-right);
+    }
+
+    html[data-theme="pastel"] {
+      --bg: #fff7fb;
+      --text: #342b38;
+
+      --prompt-bg: #fde9f5;          /* light pink */
+      --prompt-textarea-bg: #e9d5f5; /* lilac */
+      --button-bg: #e9d5f5;
+      --llm-output-bg: #e9d5f5;
+
+      --code-fg: #342b38;
+      --icon-strong: #b57edc;        /* purple */
+
+      /* Visible borders for pastel */
+      --border: #c9afe7;
+      --line: #e1c9f0;
+      --muted-text: #6b6070;
+      --shadow: rgba(163,112,194,.25);
+      --focus-glow: rgba(181,126,220,.25);
+
+      --scrollbar-hover: color-mix(in srgb, var(--icon-strong) 70%, #000);
+
+      /* Pastel: left = pink, right = purple */
+      --slider-left: #f3a6cf;
+      --slider-right: var(--icon-strong);
+
+      --range-active: var(--slider-left);
+      --range-rest: var(--slider-right);
+    }
+
+    /* ───────────────────────────────────────────────────────────────
+       BASE LAYOUT
+       ─────────────────────────────────────────────────────────────── */
+    * { box-sizing: border-box }
+    html, body { height: 100% }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* Left sidebar: raw LLM output */
+    #chat {
+      width: 300px;
+      padding: 10px;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      background: var(--prompt-bg);
+      gap: 8px;
+    }
+
+    /* Non-scrolling wrapper (overlay container) */
+    #chat-output-wrapper {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--llm-output-bg);
+      color: var(--code-fg);
+      tab-size: 2;
+      font-family: "Fira Code", Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.4;
+      overflow: hidden; /* keep copy button pinned */
+    }
+
+    /* Inner scroller holds the <pre><code> and scrolls independently */
+    #chat-scroll {
+      position: absolute;
+      inset: 0;
+      overflow: auto;
+      display: block;
+      height: 100%;
+      width: 100%;
+    }
+    #chat-scroll pre {
+      margin: 0;
+      min-width: 100%; /* horizontal scrollbar stays at bottom of container */
+    }
+
+    /* Ensure Prism doesn’t force inner scrollbars */
+    pre[class*="language-"],
+    code[class*="language-"] { overflow: visible !important; }
+
+    #chat-output { white-space: pre; }
+
+    /* Copy button pinned bottom-right */
+    .copy-chip {
+      all: unset;
+      position: absolute;
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--button-bg);
+      color: var(--icon-strong);
+      cursor: pointer;
+      user-select: none;
+      box-shadow: 0 0 0 0 transparent;
+      transition: box-shadow .15s ease, transform .06s ease;
+      z-index: 2;
+    }
+    .copy-chip:hover { box-shadow: 0 0 0 2px var(--focus-glow) inset; }
+    .copy-chip:active { transform: scale(.98); }
+    .copy-bottom-right { bottom: 10px; right: 10px; }
+
+    /* Main column: canvas + prompt frame */
+    #main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+
+    /* Simulation canvas */
+    #iframe-container {
+      flex: 1 1 auto;
+      overflow: hidden;
+      min-width: 0;
+      min-height: 0;
+      position: relative;
+      background: var(--prompt-bg);
+      border-bottom: 1px solid var(--line);
+    }
+    iframe { width: 100%; height: 100%; border: none; display: block; }
+
+    /* Legacy loading overlay is hidden */
+    #loading-overlay { display: none !important; }
+
+    /* Simple flash animation (prompt overlay) */
+    @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .4 } }
+
+    /* Prompt frame */
+    #prompt-frame {
+      flex: 0 0 auto;
+      display: flex;
+      justify-content: center;
+      padding: 10px 14px;
+      background: var(--prompt-bg);
+      border-top: 1px solid var(--line);
+    }
+    #prompt-cluster { display: flex; align-items: center; gap: 8px; max-width: min(1100px, 95vw); }
+
+    /* Buttons (round icon buttons) */
+    .circle-btn {
+      all: unset;
+      width: 36px;
+      height: 36px;
+      display: inline-grid;
+      place-items: center;
+      border-radius: 9999px;
+      background: var(--button-bg);
+      border: 1px solid var(--border);
+      color: var(--icon-strong);
+      cursor: pointer;
+      user-select: none;
+      transition: transform .06s ease, box-shadow .15s ease;
+      flex: 0 0 auto;
+    }
+    .circle-btn:hover  { box-shadow: 0 0 0 2px var(--focus-glow) inset; }
+    .circle-btn:active { transform: scale(0.98); }
+
+    /* Left and right button groups */
+    #prompt-left, #prompt-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+
+    /* ───────────────────────────────────────────────────────────────
+       MODEL PICKER (drop-up)
+       ─────────────────────────────────────────────────────────────── */
+    #model-picker { position: relative; }
+    #model-menu {
+      position: absolute;
+      left: 0;
+      bottom: calc(100% + var(--dropup-offset));
+      min-width: 260px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 8px 20px var(--shadow);
+      padding: 8px;
+      display: none;
+      max-height: 280px;
+      overflow: auto;
+      z-index: 30;
+      color: var(--text);
+      font-size: 14px;
+    }
+    #model-picker.open #model-menu { display: block; }
+    #model-search {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 6px;
+      color: inherit;
+      background: transparent;
+    }
+    #model-search:focus { outline: none; border-color: var(--border); box-shadow: none; }
+    .model-item { padding: 8px; border-radius: 8px; cursor: pointer; }
+    .model-item:hover, .model-item.active { background: rgba(0,0,0,.06); }
+    html[data-theme="dark"] .model-item:hover,
+    html[data-theme="dark"] .model-item.active { background: rgba(255,255,255,.06); }
+    .model-meta { display: block; font-size: 12px; opacity: .7; }
+
+    /* ───────────────────────────────────────────────────────────────
+       PARAMETERS PANEL
+       ─────────────────────────────────────────────────────────────── */
+    #params { position: relative; }
+    #params-panel {
+      position: absolute;
+      left: 0;
+      bottom: calc(100% + var(--dropup-offset));
+      width: 340px;
+      max-width: 90vw;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 12px 28px var(--shadow);
+      padding: 12px;
+      display: none;
+      z-index: 40;
+      font-size: 14px;
+    }
+    #params.open #params-panel { display: block; }
+    .params-title { margin: 0 0 8px 0; font-size: 14px; font-weight: 700; }
+    .param-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 0;
+    }
+    /* Max tokens row: equal grids to match slider width */
+    .param-row--max { grid-template-columns: 1fr 1fr; }
+    .param-row small { font-size: 12px; opacity: .7; }
+
+    /* Two-tone range + number field */
+    input[type="range"] {
+      width: 100%;
+      appearance: none;
+      height: 4px;
+      border-radius: 999px;
+      background: transparent;
+      outline: none;
+      cursor: pointer;
+      --pct: 0%;
+    }
+    /* WebKit/Blink track as gradient split at --pct */
+    input[type="range"]::-webkit-slider-runnable-track {
+      height: 4px;
+      border-radius: 999px;
+      background: linear-gradient(to right,
+        var(--range-active) 0%,
+        var(--range-active) var(--pct),
+        var(--range-rest)   var(--pct),
+        var(--range-rest)   100%
+      );
+    }
+    /* Firefox track/progress */
+    input[type="range"]::-moz-range-track {
+      height: 4px;
+      border-radius: 999px;
+      background: var(--range-rest);
+    }
+    input[type="range"]::-moz-range-progress {
+      height: 4px;
+      border-radius: 999px;
+      background: var(--range-active);
+    }
+    /* Thumbs */
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--button-bg);
+      border: 1px solid var(--border);
+      margin-top: -6px; /* center on track */
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--button-bg);
+      border: 1px solid var(--border);
+    }
+
+    input[type="number"] {
+      width: 110px;
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--prompt-textarea-bg);
+      color: var(--text);
+      font: inherit;
+      -moz-appearance: textfield; /* remove spinners in Firefox */
+    }
+    /* Max tokens box: half slider length, right-aligned */
+    #p-max_tokens { width: 50%; justify-self: end; text-align: right; }
+
+    /* Remove Chromium number spinners */
+    input[type="number"]::-webkit-outer-spin-button,
+    input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type="number"]:focus { outline: none; box-shadow: 0 0 0 2px var(--focus-glow) inset; }
+
+    .param-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+    .pill-btn {
+      all: unset;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--button-bg);
+      color: var(--text);
+      cursor: pointer;
+      user-select: none;
+    }
+    .pill-btn:hover { box-shadow: 0 0 0 2px var(--focus-glow) inset; }
+
+    /* ───────────────────────────────────────────────────────────────
+       PROMPT
+       ─────────────────────────────────────────────────────────────── */
+    .prompt-wrap { position: relative; flex: 0 1 auto; }
+    #prompt {
+      flex: 0 1 auto;
+      width: clamp(380px, 48vw, 820px);
+      margin: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      outline: none;
+      border-radius: 12px;
+      background: var(--prompt-textarea-bg);
+      color: var(--text);
+      caret-color: var(--icon-strong);
+      font-size: 14px;
+      resize: none;
+      line-height: 1.3;
+      max-height: 28vh;
+      min-height: 58px;
+      box-shadow: none;
+    }
+    #prompt::placeholder { color: var(--icon-strong); opacity: 1; }
+
+    /* Locked state (no caret) */
+    #prompt.locked { pointer-events: none; caret-color: transparent; }
+    .prompt-wrap.locked { cursor: default; }
+    .prompt-wrap.locked #prompt { filter: none; }
+
+    /* Centered "Please wait..." overlay */
+    #prompt-wait {
+      position: absolute;
+      inset: 0;
+      display: none;
+      pointer-events: none;
+      place-items: center;
+      font-weight: 600;
+      letter-spacing: .2px;
+      color: var(--icon-strong);
+      animation: pulse 1.2s ease-in-out infinite;
+      z-index: 1;
+    }
+
+    /* ───────────────────────────────────────────────────────────────
+       UNIFIED THEME-AWARE SCROLLBARS (host document)
+       ─────────────────────────────────────────────────────────────── */
+    :root { --scrollbar-size: 8px; --scrollbar-radius: 4px; }
+    * { scrollbar-width: thin; scrollbar-color: var(--icon-strong) transparent; }
+    ::-webkit-scrollbar { width: var(--scrollbar-size); height: var(--scrollbar-size); }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { border-radius: var(--scrollbar-radius); background-color: var(--icon-strong); }
+    ::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-hover); }
+  </style>
+
+  <!-- Prism (offline) -->
+  <link rel="stylesheet" href="vendor/prism/prism.min.css">
+  <script defer src="vendor/prism/prism-core.min.js"></script>
+  <script defer src="vendor/prism/prism-clike.min.js"></script>
+  <script defer src="vendor/prism/prism-markup.min.js"></script>
+  <script defer src="vendor/prism/prism-javascript.min.js"></script>
+  <script defer src="vendor/prism/prism-css.min.js"></script>
+</head>
+
+<body>
+  <div id="chat">
+    <div id="chat-output-wrapper">
+      <!-- Scroll container with pre/code -->
+      <div id="chat-scroll">
+        <pre class="language-markup"><code id="chat-output" class="language-markup"></code></pre>
+      </div>
+
+      <!-- Copy raw output -->
+      <button id="copy-bottom" class="copy-chip copy-bottom-right" title="Copy">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-copy">
+          <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+          <path d="M7 7m0 2.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667z" />
+          <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="iframe-container">
+      <iframe id="sim-frame"></iframe>
+      <div id="loading-overlay">Please wait a moment…</div>
+    </div>
+
+    <div id="prompt-frame">
+      <div id="prompt-cluster">
+        <div id="prompt-left">
+          <!-- Model picker -->
+          <div id="model-picker">
+            <button id="model-button" class="circle-btn" title="Model">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-brain">
+                <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+                <path d="M15.5 13a3.5 3.5 0 0 0 -3.5 3.5v1a3.5 3.5 0 0 0 7 0v-1.8" />
+                <path d="M8.5 13a3.5 3.5 0 0 1 3.5 3.5v1a3.5 3.5 0 0 1 -7 0v-1.8" />
+                <path d="M17.5 16a3.5 3.5 0 0 0 0 -7h-.5" />
+                <path d="M19 9.3v-2.8a3.5 3.5 0 0 0 -7 0" />
+                <path d="M6.5 16a3.5 3.5 0 0 1 0 -7h.5" />
+                <path d="M5 9.3v-2.8a3.5 3.5 0 0 1 7 0v10" />
+              </svg>
+              <span id="model-label" style="position:absolute;left:-9999px">(loading…)</span>
+            </button>
+            <div id="model-menu" role="listbox" tabindex="-1" aria-label="Available models">
+              <input id="model-search" type="text" placeholder="Filter models…" autocomplete="off" />
+              <div id="model-list" role="presentation"></div>
+            </div>
+          </div>
+
+          <!-- Parameters -->
+          <div id="params">
+            <button id="params-btn" class="circle-btn" title="Parameters">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-settings">
+                <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+                <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z" />
+                <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
+              </svg>
+            </button>
+
+            <div id="params-panel" role="dialog" aria-label="Generation parameters">
+              <h4 class="params-title">Generation parameters</h4>
+
+              <div class="param-row">
+                <label for="p-temperature">Temperature <small id="v-temperature"></small></label>
+                <input id="p-temperature" type="range" min="0" max="2" step="0.01">
+              </div>
+
+              <div class="param-row">
+                <label for="p-top_p">Top-p <small id="v-top_p"></small></label>
+                <input id="p-top_p" type="range" min="0" max="1" step="0.01">
+              </div>
+
+              <div class="param-row">
+                <label for="p-top_k">Top-k <small id="v-top_k"></small></label>
+                <input id="p-top_k" type="range" min="0" max="100" step="1">
+              </div>
+
+              <div class="param-row">
+                <label for="p-min_p">Min-p <small id="v-min_p"></small></label>
+                <input id="p-min_p" type="range" min="0" max="1" step="0.01">
+              </div>
+
+              <div class="param-row">
+                <label for="p-repeat_penalty">Repetition penalty <small id="v-repeat_penalty"></small></label>
+                <input id="p-repeat_penalty" type="range" min="0.9" max="2.0" step="0.01">
+              </div>
+
+              <div class="param-row">
+                <label for="p-num_ctx">Context length <small id="v-num_ctx"></small></label>
+                <input id="p-num_ctx" type="range" min="512" max="32768" step="256">
+              </div>
+
+              <div class="param-row param-row--max">
+                <label for="p-max_tokens">Max tokens</label>
+                <input id="p-max_tokens" type="number" min="16" max="8192" step="1">
+              </div>
+
+              <div class="param-actions">
+                <button id="params-apply" class="pill-btn" type="button">Apply</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Theme toggle -->
+          <button id="theme-btn" class="circle-btn" title="Theme">
+            <svg id="theme-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-palette">
+              <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+              <path d="M12 21a9 9 0 0 1 0 -18c4.97 0 9 3.582 9 8c0 1.06 -.474 2.078 -1.318 2.828c-.844 .75 -1.989 1.172 -3.182 1.172h-2.5a2 2 0 0 0 -1 3.75a1.3 1.3 0 0 1 -1 2.25" />
+              <path d="M8.5 10.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+              <path d="M12.5 7.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+              <path d="M16.5 10.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Prompt + wait overlay -->
+        <div class="prompt-wrap">
+          <textarea id="prompt" rows="3" placeholder="Simulate Anything..."></textarea>
+          <div id="prompt-wait" aria-live="polite">Please wait a moment…</div>
+        </div>
+
+        <div id="prompt-right">
+          <!-- Stop -->
+          <button id="stop" class="circle-btn" title="Stop">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <rect x="5" y="5" width="14" height="14" rx="2"></rect>
+            </svg>
+          </button>
+
+          <!-- Clear -->
+          <button id="clear-all" class="circle-btn" title="Clear">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-trash">
+              <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+              <path d="M4 7l16 0" />
+              <path d="M10 11l0 6" />
+              <path d="M14 11l0 6" />
+              <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" />
+              <path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" />
+            </svg>
+          </button>
+
+          <!-- Random -->
+          <button id="random" class="circle-btn" title="Random">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-arrows-shuffle">
+              <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+              <path d="M18 4l3 3l-3 3" />
+              <path d="M18 20l3 -3l-3 -3" />
+              <path d="M3 7h3a5 5 0 0 1 5 5a5 5 0 0 0 5 5h5" />
+              <path d="M21 7h-5a4.978 4.978 0 0 0 -3 1m-4 8a4.984 4.984 0 0 1 -3 1h-3" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Iframe CSS injector: theme + containment (prevents crop + horizontal scroll) -->
+  <script>
+    const iframe = document.getElementById("sim-frame");
+
+    function readComputed(name) {
+      const v = getComputedStyle(document.documentElement).getPropertyValue(name);
+      return (v || '').trim();
+    }
+
+    function injectIframeStyles(doc) {
+      const iconStrong = readComputed('--icon-strong') || '#666';
+      const hoverCol   = readComputed('--scrollbar-hover') || iconStrong;
+      const old = doc.getElementById("les-iframe-scrollbars");
+      if (old) old.remove();
+
+      const style = doc.createElement("style");
+      style.id = "les-iframe-scrollbars";
+      style.textContent = `
+/* Containment shim */
+html, body {
+  margin:0; padding:0; min-height:100%; height:auto;
+  overflow-y:auto; overflow-x:hidden !important;
+}
+*, *::before, *::after { box-sizing:border-box; }
+img, canvas, svg, video, iframe { display:block; max-width:100% !important; height:auto; }
+pre, code, kbd, samp, textarea { white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; }
+table { display:block; max-width:100%; overflow-x:auto; }
+
+/* Theme-aware scrollbars for iframe content */
+:root{
+  --icon-strong: ${iconStrong};
+  --scrollbar-size: 8px;
+  --scrollbar-radius: 4px;
+  --scrollbar-hover: ${hoverCol};
+}
+*{ scrollbar-width: thin; scrollbar-color: var(--icon-strong) transparent; }
+::-webkit-scrollbar { width: var(--scrollbar-size); height: var(--scrollbar-size); }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { border-radius: var(--scrollbar-radius); background-color: var(--icon-strong); }
+::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-hover); }
+`;
+      doc.head.appendChild(style);
+    }
+
+    iframe.addEventListener("load", function () {
+      const doc = this.contentDocument || this.contentWindow.document;
+      injectIframeStyles(doc);
+    });
+
+    /* Expose for external use if needed */
+    window.injectIframeStyles = injectIframeStyles;
+
+    /* Keep two-tone sliders in sync with their values */
+    (function syncRangeBackgrounds(){
+      function update(el){
+        const min = parseFloat(el.min || 0);
+        const max = parseFloat(el.max || 100);
+        const v = (el.value !== undefined && el.value !== null && el.value !== '') ? parseFloat(el.value) : (min + max) / 2;
+        const pct = Math.max(0, Math.min(100, ((v - min) / (max - min)) * 100));
+        el.style.setProperty('--pct', pct + '%');
+      }
+
+      function updateAll(){
+        document.querySelectorAll('#params-panel input[type="range"]').forEach(update);
+      }
+
+      /* Initial sync */
+      window.addEventListener('load', updateAll);
+
+      /* Sync when panel toggles open (fixes initial color bleed) */
+      document.getElementById('params-btn')?.addEventListener('click', () => {
+        setTimeout(updateAll, 0);
+      });
+
+      /* Expose for programmatic updates */
+      window.__updateParamSliderBGs = updateAll;
+
+      /* Live updates while dragging/committing */
+      document.addEventListener('input', (e) => {
+        if (e.target?.matches?.('#params-panel input[type="range"]')) update(e.target);
+      });
+      document.addEventListener('change', (e) => {
+        if (e.target?.matches?.('#params-panel input[type="range"]')) update(e.target);
+      });
+    })();
+  </script>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
